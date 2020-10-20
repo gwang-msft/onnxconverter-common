@@ -20,6 +20,22 @@ def _npfloat16_to_int(np_list):
     return [int(bin(_.view('H'))[2:].zfill(16), 2) for _ in np_list]
 
 
+def skip_convert_tensor(graph, tensor):
+    '''
+    If the tensor is the input 1 or 2 (roi or scale) of a Resize Op, we ignore them here
+    '''
+    for n in graph.node:
+        if n.op_type == "Resize":
+            input_size = len(n.input)
+            # roi
+            if input_size > 1 and n.input[1] == tensor.name:
+                return True
+            # scale
+            if input_size > 2 and n.input[2] == tensor.name:
+                return True
+    return False
+
+
 def convert_tensor_float_to_float16(tensor):
     '''
     Convert tensor float to float16.
@@ -94,7 +110,7 @@ def convert_float_to_float16(model):
     op_black_list = ['ArrayFeatureExtractor', 'Binarizer', 'CastMap', 'CategoryMapper', 'DictVectorizer',
                      'FeatureVectorizer', 'Imputer', 'LabelEncoder', 'LinearClassifier', 'LinearRegressor',
                      'Normalizer', 'OneHotEncoder', 'SVMClassifier', 'SVMRegressor', 'Scaler', 'TreeEnsembleClassifier',
-                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign', 'Resize',
+                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign',
                      'Range', 'CumSum']
     # create a queue for BFS
     queue = []
@@ -137,7 +153,8 @@ def convert_float_to_float16(model):
             # if q is graph, process graph.initializer(TensorProto), input, output and value_info (ValueInfoProto)
             if isinstance(q, onnx_proto.GraphProto):
                 for n in q.initializer:  # TensorProto type
-                    n = convert_tensor_float_to_float16(n)
+                    if not skip_convert_tensor(q,n):
+                        n = convert_tensor_float_to_float16(n)
                 # for all ValueInfoProto with tensor(float) type in input, output and value_info, convert them to
                 # tensor(float16) except map and seq(map). And save them in value_info_list for further processing
                 for n in itertools.chain(q.input, q.output, q.value_info):
