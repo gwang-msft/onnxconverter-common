@@ -20,6 +20,22 @@ def _npfloat16_to_int(np_list):
     return [int(bin(_.view('H'))[2:].zfill(16), 2) for _ in np_list]
 
 
+def skip_convert_tensor(graph, tensor):
+    '''
+    If the tensor is the input 1 or 2 (roi or scale) of a Resize Op, we ignore them here
+    '''
+    for n in graph.node:
+        if n.op_type == "Resize":
+            input_size = len(n.input)
+            # roi
+            if input_size > 1 and n.input[1] == tensor.name:
+                return True
+            # scale
+            if input_size > 2 and n.input[2] == tensor.name:
+                return True
+    return False
+
+
 def convert_tensor_float_to_float16(tensor):
     '''
     Convert tensor float to float16.
@@ -42,8 +58,7 @@ def convert_tensor_float_to_float16(tensor):
         tensor.data_type = onnx_proto.TensorProto.FLOAT16
         # convert float_data (float type) to float16 and write to int32_data
         if tensor.float_data:
-            float16_data = convert_np_to_float16(tensor.float_data, min_positive_val, max_finite_val)
-            int_list = _npfloat16_to_int(float16_data)
+            int_list = _npfloat16_to_int(np.float16(tensor.float_data))
             tensor.int32_data[:] = int_list
             tensor.float_data[:] = []
         # convert raw_data (bytes type)
@@ -51,13 +66,13 @@ def convert_tensor_float_to_float16(tensor):
             # convert n.raw_data to float
             float32_list = np.fromstring(tensor.raw_data, dtype='float32')
             # convert float to float16
-            float16_list = convert_np_to_float16(float32_list, min_positive_val, max_finite_val)
+            float16_list = np.float16(float32_list)
             # convert float16 to bytes and write back to raw_data
             tensor.raw_data = float16_list.tostring()
     return tensor
 
 
-def convert_float_to_float16(model, min_positive_val=1e-7, max_finite_val=1e4):
+def convert_float_to_float16(model):
     '''
     Convert tensor float type in the ONNX ModelProto input to tensor float16.
 
@@ -132,13 +147,14 @@ def convert_float_to_float16(model, min_positive_val=1e-7, max_finite_val=1e4):
                 next_level.append(q.g)
                 for n in q.graphs:
                     next_level.append(n)
-                q.t.CopyFrom(convert_tensor_float_to_float16(q.t, min_positive_val, max_finite_val))
+                q.t.CopyFrom(convert_tensor_float_to_float16(q.t))
                 for n in q.tensors:
-                    n = convert_tensor_float_to_float16(n, min_positive_val, max_finite_val)
+                    n = convert_tensor_float_to_float16(n)
             # if q is graph, process graph.initializer(TensorProto), input, output and value_info (ValueInfoProto)
             if isinstance(q, onnx_proto.GraphProto):
                 for n in q.initializer:  # TensorProto type
-                    n = convert_tensor_float_to_float16(n)
+                    if not skip_convert_tensor(q,n):
+                        n = convert_tensor_float_to_float16(n)
                 # for all ValueInfoProto with tensor(float) type in input, output and value_info, convert them to
                 # tensor(float16) except map and seq(map). And save them in value_info_list for further processing
                 for n in itertools.chain(q.input, q.output, q.value_info):
