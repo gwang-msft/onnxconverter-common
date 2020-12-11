@@ -19,38 +19,8 @@ def _npfloat16_to_int(np_list):
     '''
     return [int(bin(_.view('H'))[2:].zfill(16), 2) for _ in np_list]
 
-def skip_convert_tensor(graph, tensor):
-    '''
-    If the tensor is the input 1 or 2 (roi or scale) of a Resize Op, we ignore them here
-    '''
-    for n in graph.node:
-        if n.op_type == "Resize":
-            input_size = len(n.input)
-            # roi
-            if input_size > 1 and n.input[1] == tensor.name:
-                return True
-            # scale
-            if input_size > 2 and n.input[2] == tensor.name:
-                return True
-    return False
 
-def convert_np_to_float16(np_array, min_positive_val=1e-7, max_finite_val=1e4):
-    '''
-    Convert float32 numpy array to float16 without changing sign or finiteness.
-    Positive values less than min_positive_val are mapped to min_positive_val.
-    Positive finite values greater than max_finite_val are mapped to max_finite_val.
-    Similar for negative values. NaN, 0, inf, and -inf are unchanged.
-    '''
-    def between(a, b, c):
-        return np.logical_and(a < b, b < c)
-    np_array = np.where(between(0, np_array, min_positive_val), min_positive_val, np_array)
-    np_array = np.where(between(-min_positive_val, np_array, 0), -min_positive_val, np_array)
-    np_array = np.where(between(max_finite_val, np_array, float('inf')), max_finite_val, np_array)
-    np_array = np.where(between(float('-inf'), np_array, -max_finite_val), -max_finite_val, np_array)
-    return np.float16(np_array)
-
-
-def convert_tensor_float_to_float16(tensor, min_positive_val=1e-7, max_finite_val=1e4):
+def convert_tensor_float_to_float16(tensor):
     '''
     Convert tensor float to float16.
 
@@ -125,7 +95,7 @@ def convert_float_to_float16(model, min_positive_val=1e-7, max_finite_val=1e4):
     op_black_list = ['ArrayFeatureExtractor', 'Binarizer', 'CastMap', 'CategoryMapper', 'DictVectorizer',
                      'FeatureVectorizer', 'Imputer', 'LabelEncoder', 'LinearClassifier', 'LinearRegressor',
                      'Normalizer', 'OneHotEncoder', 'SVMClassifier', 'SVMRegressor', 'Scaler', 'TreeEnsembleClassifier',
-                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign',
+                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign', 'Resize',
                      'Range', 'CumSum']
     # create a queue for BFS
     queue = []
@@ -168,8 +138,7 @@ def convert_float_to_float16(model, min_positive_val=1e-7, max_finite_val=1e4):
             # if q is graph, process graph.initializer(TensorProto), input, output and value_info (ValueInfoProto)
             if isinstance(q, onnx_proto.GraphProto):
                 for n in q.initializer:  # TensorProto type
-                    if not skip_convert_tensor(q, n):
-                        n = convert_tensor_float_to_float16(n, min_positive_val, max_finite_val)
+                    n = convert_tensor_float_to_float16(n)
                 # for all ValueInfoProto with tensor(float) type in input, output and value_info, convert them to
                 # tensor(float16) except map and seq(map). And save them in value_info_list for further processing
                 for n in itertools.chain(q.input, q.output, q.value_info):
