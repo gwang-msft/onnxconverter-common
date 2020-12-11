@@ -157,10 +157,57 @@ def convert_float_to_float16(model):
                         n = convert_tensor_float_to_float16(n)
                 # for all ValueInfoProto with tensor(float) type in input, output and value_info, convert them to
                 # tensor(float16) except map and seq(map). And save them in value_info_list for further processing
-                for n in itertools.chain(q.input, q.output, q.value_info):
+                for n in itertools.chain(q.value_info):
                     if n.type.tensor_type.elem_type == onnx_proto.TensorProto.FLOAT:
                         n.type.tensor_type.elem_type = onnx_proto.TensorProto.FLOAT16
                         value_info_list.append(n)
+
+                graph_inputs_outputs = []
+                for n in itertools.chain(q.input, q.output):
+                    if n.type.tensor_type.elem_type == onnx_proto.TensorProto.FLOAT:
+                        graph_inputs_outputs.append(n)
+
+                # for all fp32 input, convert them to fp16 and connect to the nodes using them
+                for node in q.node:
+                    if node.op_type == 'Cast':
+                        continue
+
+                    for i in range(len(node.input)):
+                        input = node.input[i]
+                        for value_info in graph_inputs_outputs:
+                            if input == value_info.name:
+                                # create new value_info for current node's new input name
+                                new_value_info = model.graph.value_info.add()
+                                new_value_info.CopyFrom(value_info)
+                                output_name = node.name + '_input_cast_' + str(i)
+                                new_value_info.name = output_name
+                                new_value_info.type.tensor_type.elem_type = onnx_proto.TensorProto.FLOAT16
+                                # add Cast node (from tensor(float16) to tensor(float) before current node
+                                node_name = node.name + '_input_cast' + str(i)
+                                new_node = [helper.make_node('Cast', [input], [output_name], to=10, name=node_name)]
+                                model.graph.node.extend(new_node)
+                                # change current node's input name
+                                node.input[i] = output_name
+                                continue
+
+                    # for all fp32 output, convert them to fp32 and connect to the nodes output them
+                    for i in range(len(node.output)):
+                        output = node.output[i]
+                        for value_info in graph_inputs_outputs:
+                            if output == value_info.name:
+                                # create new value_info for current node's new output
+                                new_value_info = model.graph.value_info.add()
+                                new_value_info.CopyFrom(value_info)
+                                input_name = node.name + '_output_cast_' + str(i)
+                                new_value_info.name = input_name
+                                new_value_info.type.tensor_type.elem_type = onnx_proto.TensorProto.FLOAT
+                                # add Cast node (from tensor(float) to tensor(float16) after current node
+                                node_name = node.name + '_output_cast' + str(i)
+                                new_node = [helper.make_node('Cast', [input_name], [output], to=1, name=node_name)]
+                                model.graph.node.extend(new_node)
+                                # change current node's input name
+                                node.output[i] = input_name
+                                continue
         queue = next_level
 
     # process the nodes in black list that doesn't support tensor(float16)
