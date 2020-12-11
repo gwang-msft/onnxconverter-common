@@ -110,7 +110,7 @@ def convert_float_to_float16(model):
     op_black_list = ['ArrayFeatureExtractor', 'Binarizer', 'CastMap', 'CategoryMapper', 'DictVectorizer',
                      'FeatureVectorizer', 'Imputer', 'LabelEncoder', 'LinearClassifier', 'LinearRegressor',
                      'Normalizer', 'OneHotEncoder', 'SVMClassifier', 'SVMRegressor', 'Scaler', 'TreeEnsembleClassifier',
-                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign', 'Resize',
+                     'TreeEnsembleRegressor', 'ZipMap', 'NonMaxSuppression', 'TopK', 'RoiAlign',
                      'Range', 'CumSum']
     # create a queue for BFS
     queue = []
